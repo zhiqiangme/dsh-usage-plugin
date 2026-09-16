@@ -8,6 +8,21 @@
 
 ---
 
+## v1.16.5-local.2（本地构建 / Local build）
+
+### 修复 / Fixed
+
+- **切走再切回会话时停留在插件页签**（lib/client.js）：harness 的 conversation.view 选择是**按会话持久化**的（localStorage 键 dsh.conversation.<sessionId>，见 dsh-client-ui-conversation 的 readConversationViewPreference / restoreView），切回某会话时会恢复上次停留的页签，于是停在「用量」或「余额」而不是对话界面。现在插件订阅会话切换，在**离开**会话时把自己注册的那两个 view id 复位为 chat。只动自己注册的 id，「轨迹」等内置页签与用户对它们的选择不受影响；草稿等同名存储字段原样保留。
+- **刷新 / 扫描按钮无反馈**（lib/client.js）：新增进行中状态（按钮禁用并显示「刷新中…」「扫描中…」）、完成提示（「已刷新」）与失败提示，点击后不再有"不知道点上没有"的观感。
+- **扫描按钮直接执行**：改为先弹确认框，说明该模式的影响面（当前工作区 / 全部工作区 / 深扫的重复风险），确认后才执行。
+- **移除「清空」按钮**（按用户要求）：头部只保留「刷新」「扫描历史」；已无引用的 doClear 与对应词条一并删除。后端 clear action 保留，导入等既有路径不受影响。
+
+### 测试 / Tests
+
+- 新增 test/view-reset.test.js（5 例）：离开会话时复位偏好且保留草稿、内置 trajectory 页签不被触碰、无偏好时不凭空写入、存储损坏不抛错、缺少 sessions 服务时降级激活。
+
+---
+
 ## v1.16.5-local.1（本地构建 / Local build）
 
 > 基于 npm 上发布的 **v1.16.5**（GitHub 仓库仍停在 v1.14.1）叠加以下本地改动。
