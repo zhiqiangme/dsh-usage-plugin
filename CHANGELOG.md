@@ -8,6 +8,22 @@
 
 ---
 
+## v1.16.5-local.19（本地构建 / Local build）
+
+### 修复 / Fixes
+
+- **「总 token」不再双计未命中，与宿主状态栏对齐**（lib/index.js、lib/scan.js、lib/client.js）：根因是旧版在**记录时**把 DeepSeek 系 provider 不上报的 `cacheWriteTokens` 兜底成 `inputTokens`（探针与事后扫描同口径），伪造出一笔与未命中相等的缓存写入；而四桶合计（input+cacheRead+cacheWrite+output）把它当独立桶相加，未命中因此被双计——弹窗「对话累计 总 token」、侧边栏会话条、用量页「总 token」全部比宿主状态栏恰好大出累计未命中数（实测某会话 miss=1,828,048：面板 236M vs 状态栏 235M，差额精确吻合）。
+  - 记录层现在只存上游真实上报值（DeepSeek 系记 0）；「缓存写入」列的兜底移到**展示层**（画布表、记录表单元格与合计行、范围摘要行），展示效果不回退。
+  - 历史记录迁移：入库统一走 `normalizeRecord`（覆盖启动加载 / 旧目录迁移 / 导入），对已知从不上报 cacheWrite 的 provider（deepseek / deepseek-official / siliconflow / digital-ocean / digitalocean）中 `cacheWriteTokens === inputTokens` 的记录清零；升级后首次启动即落盘修正。
+  - 连带修正用量页命中率分母混入伪造 write（hit/(hit+miss+write)）导致 DeepSeek 下比宿主偏低的问题——write 归 0 后分母自然回到 hit+miss。
+  - 解决 v1.16.5-local.18 遗留的已知问题（「弹窗与状态栏差 1–2M，原因尚未定位」）。
+
+### 测试 / Tests
+
+- `test/scan.test.js`：cacheWrite 断言改为新口径（未上报记 0、上报值保留）；新增源码回归护栏——探针与扫描不得再用未命中兜底 cacheWrite。
+
+---
+
 ## v1.16.5-local.18（本地构建 / Local build）
 
 ### 界面 / UI
@@ -22,7 +38,7 @@
 
 ### 已知问题 / Known issue
 
-- 弹窗「对话累计 总 token」与底部状态栏仍有约 1–2M 的差异（如 229M vs 227M），**原因尚未定位**。已验证的是：聚合算法与官方四桶口径逐值一致、`reasoning` 重复计算已修复，因此差异来自**数据源本身**——状态栏是会话投影（随事件即时更新），插件来自 `llm/stream` 探针记录（含轮询延迟与可能的窗口边界差异）。暂不处理。
+- 弹窗「对话累计 总 token」与底部状态栏仍有约 1–2M 的差异（如 229M vs 227M），**原因尚未定位**。已验证的是：聚合算法与官方四桶口径逐值一致、`reasoning` 重复计算已修复，因此差异来自**数据源本身**——状态栏是会话投影（随事件即时更新），插件来自 `llm/stream` 探针记录（含轮询延迟与可能的窗口边界差异）。暂不处理。（**已于 v1.16.5-local.19 定位并修复**：根因是探针/扫描在记录时把 cacheWrite 兜底成未命中，四桶合计双计未命中；此前"数据源差异"的判断不成立。）
 
 ---
 

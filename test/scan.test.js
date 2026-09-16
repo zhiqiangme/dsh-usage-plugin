@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   SCAN_ORIGIN,
   SCAN_CACHE_VERSION,
@@ -121,15 +124,25 @@ test('reduceSessionEvents attributes usage to provider/model with request/header
   assert.equal(records[1].model, 'deepseek-ai/deepseek-v4-pro')
 })
 
-test('cacheWriteTokens falls back to uncached input like the live probe does', () => {
+test('cacheWriteTokens stores only the reported value (no miss fallback)', () => {
   const { records } = reduceSessionEvents([
     message(0, 1, 1, 1, { inputTokens: 500, outputTokens: 5, cacheReadTokens: 100 })
   ], { sessionId: 's' })
-  assert.equal(records[0].cacheWriteTokens, 500, 'DeepSeek 系不上报 cacheWrite，用未命中输入兜底')
+  assert.equal(records[0].cacheWriteTokens, 0, 'DeepSeek 系不上报 cacheWrite，记 0；兜底展示由客户端负责')
   const explicit = reduceSessionEvents([
     message(0, 1, 1, 1, { inputTokens: 500, outputTokens: 5, cacheWriteTokens: 42 })
   ], { sessionId: 's' })
   assert.equal(explicit.records[0].cacheWriteTokens, 42, '上报了就按上报值')
+})
+
+test('probe and scan source never fabricate cacheWrite from miss again', () => {
+  // 回归护栏：旧版用 inputTokens 兜底伪造 cacheWrite，导致四桶合计双计未命中，
+  // 「总 token」比宿主状态栏大出累计未命中数。此处直接检查源码防止复发。
+  const lib = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lib')
+  const host = fs.readFileSync(path.join(lib, 'index.js'), 'utf8')
+  const scan = fs.readFileSync(path.join(lib, 'scan.js'), 'utf8')
+  assert.equal(/cacheWriteTokens\s*\|\|\s*(usage\.)?inputTokens/.test(host), false, '探针不得用未命中兜底 cacheWrite')
+  assert.equal(/usage\.cacheWriteTokens\)\s*\|\|\s*num\(sample\.usage\.inputTokens\)/.test(scan), false, '扫描不得用未命中兜底 cacheWrite')
 })
 
 test('scanRecordKey keeps rescanning idempotent via turn/step', () => {
