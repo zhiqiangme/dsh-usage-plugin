@@ -8,6 +8,17 @@
 
 ---
 
+## v1.16.5-local.7（本地构建 / Local build）
+
+### 界面 / UI
+
+- **「帮助与说明」移到子页签栏右侧**（lib/client.js）：该按钮原先独占一行（`st.calBar, marginTop: 8`），位于「概览 / 用量日历 / 缓存命中列表 / 价格表」子页签栏的下方，占用一整行高度。
+  - 现把它并入子页签栏同一行、靠右显示（`st.subtabBar` 增加 `justifyContent: "space-between"`）；
+  - 子页签外包一层 `st.subtabGroup`，窄屏换行时页签仍成组；
+  - 按钮功能不变：点击展开/收起说明面板，中断调用数量角标照常显示。
+
+---
+
 ## v1.16.5-local.6（本地构建 / Local build）
 
 ### 界面 / UI
