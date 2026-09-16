@@ -8,6 +8,17 @@
 
 ---
 
+## v1.16.5-local.5（本地构建 / Local build）
+
+### 界面 / UI
+
+- **统一卡片的横向与纵向间距**（lib/client.js）：此前各网格的间距不一致——横向 10px，而纵向同时受 grid 的 row-gap 与容器 marginTop 叠加影响，实际出现 14 / 24 / 26 三种值，视觉上"横竖间隙不一样"（实机截图像素测量：竖缝 13px、横缝 30px）。
+  - 新增单一常量 `GAP = 16`，由 `st.root` 的 gap 与 `st.cards` / `st.bigCards` / `st.tokenBar` / `st.chartGrid` 的 gap 共用，横竖一致；
+  - 移除叠加在容器 gap 之上的 `marginTop`（tokenBar、chartGrid、cards 等），避免间距再被二次撑开；
+  - 后续需要整体调宽/调窄，只改 `GAP` 一处即可。
+
+---
+
 ## v1.16.5-local.4（本地构建 / Local build）
 
 ### 修复 / Fixed
