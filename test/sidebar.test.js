@@ -8,17 +8,19 @@ const CLIENT = path.join(here, '..', 'lib', 'client.js')
 let mounts = 0
 let ELEMENTS = []
 
-async function loadClient() {
+async function loadClient(opts) {
+  const o = opts || {}
   ELEMENTS = []
   const fakeReact = {
     createElement: (type, props, ...kids) => { const n = { type, props, kids }; ELEMENTS.push(n); return n },
-    useEffect: () => {},
+    useEffect: (fn) => { if (o.runEffects) fn() },
     useRef: () => ({ current: null }),
     useState: (v) => [typeof v === 'function' ? v() : v, () => {}],
     Fragment: 'frag'
   }
-  globalThis.window = { __ModuleLoader__: null, localStorage: { _d: Object.create(null), getItem(k) { return this._d[k] ?? null }, setItem(k, v) { this._d[k] = String(v) }, removeItem(k) { delete this._d[k] } } }
+  globalThis.window = { __ModuleLoader__: null, localStorage: o.storage || { _d: Object.create(null), getItem(k) { return this._d[k] ?? null }, setItem(k, v) { this._d[k] = String(v) }, removeItem(k) { delete this._d[k] } } }
   Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US' }, configurable: true, writable: true })
+  globalThis.fetch = o.fetch || (() => Promise.resolve({ json: () => Promise.resolve({ ok: true, records: [] }) }))
   let captured = null
   window.__ModuleLoader__ = { load(d) { captured = d } }
   const url = pathToFileURL(CLIENT).href + '?mount=' + (++mounts) + '&t=' + Date.now()
@@ -30,8 +32,10 @@ async function loadClient() {
   })
 }
 
-function makeCtx() {
+function makeCtx(opts) {
+  const o = opts || {}
   const registered = []
+  const state = { current: o.session === undefined ? 'session-A' : o.session }
   const ctx = {
     get(name) {
       if (name === 'slots') return {
@@ -39,6 +43,7 @@ function makeCtx() {
         register(reg, comp) { registered.push({ slot: reg.name, id: reg.id, order: reg.order, component: comp }); return () => {} },
         subscribe: () => () => {}, entries: () => []
       }
+      if (name === 'sessions') return { list: { getSnapshot: () => ({ current: state.current }) } }
       if (name === 'timer') return { interval: () => () => {} }
       return undefined
     },
@@ -49,82 +54,132 @@ function makeCtx() {
   return { ctx, registered }
 }
 
-test('registers a sidebar.footer.action entry with its own id', async () => {
+test('registers the sidebar entry with its own id, labelled 余额', async () => {
   const exports = await loadClient()
   const h = makeCtx()
   exports.apply(h.ctx)
   const side = h.registered.find((r) => r.slot === 'sidebar.footer.action')
-  assert.ok(side, '应当注册 sidebar.footer.action')
-  assert.equal(side.id, 'usage-cost-side', '必须用本插件自己的 id')
-  assert.equal(typeof side.order, 'number')
-  assert.equal(typeof side.component, 'function')
-  assert.notEqual(side.id, 'cordis-panel', '不得复用内置 id（会替换该格）')
+  assert.ok(side)
+  assert.equal(side.id, 'usage-cost-side')
+  assert.notEqual(side.id, 'cordis-panel', '不得复用内置 id')
 })
 
-test('the registered slot component passes wide through to the entry', async () => {
+test('balanceDisplayOf formats money for currency providers', async () => {
   const exports = await loadClient()
+  // 后端 totalBalance 已是格式化字符串
+  const v = exports.balanceDisplayOf('deepseek', { ok: true, provider: 'deepseek', providerName: 'DeepSeek', totalBalance: '288.73', currency: 'CNY' })
+  assert.equal(v.amount, '¥288.73')
+  assert.equal(v.provider.name, 'DeepSeek')
+  const usd = exports.balanceDisplayOf('digitalocean', { ok: true, providerName: 'DigitalOcean', totalBalance: '12.50', currency: 'USD' })
+  assert.equal(usd.amount, '$12.50')
+  // 后端已带符号时不得重复加符号
+  const signed = exports.balanceDisplayOf('deepseek', { ok: true, providerName: 'DeepSeek', totalBalance: '¥288.73', currency: 'CNY' })
+  assert.equal(signed.amount, '¥288.73')
+  // 缺 totalBalance 时回退到 balance
+  const fallback = exports.balanceDisplayOf('deepseek', { ok: true, providerName: 'DeepSeek', balance: '5.00', currency: 'CNY' })
+  assert.equal(fallback.amount, '¥5.00')
+})
+
+test('balanceDisplayOf shows the quota percent string for the token-plan provider', async () => {
+  const exports = await loadClient()
+  // balance.js 产出的 usedPercent 是形如 "39.7%" 的字符串
+  const v = exports.balanceDisplayOf('qwen-token-plan', { ok: true, providerName: '百炼 Token Plan', usedPercent: '39.7%' })
+  assert.equal(v.amount, '39.7%')
+  // 数字也接受
+  assert.equal(exports.balanceDisplayOf('qwen-token-plan', { ok: true, usedPercent: 37.4 }).amount, '37.4%')
+  assert.equal(exports.balanceDisplayOf('qwen-token-plan', { ok: true }), null, '没有配额字段时应返回 null')
+})
+
+test('balanceDisplayOf returns null when no amount is available', async () => {
+  const exports = await loadClient()
+  assert.equal(exports.balanceDisplayOf('deepseek', { ok: true }), null)
+  assert.equal(exports.balanceDisplayOf('deepseek', { ok: true, totalBalance: '' }), null)
+})
+
+test('probeFirstBalance picks the FIRST configured provider, skipping unconfigured ones', async () => {
+  // siliconflow 未配置凭据 -> 跳过；digitalocean 已配置且查到余额 -> 命中它。
+  const calls = []
+  const fetchImpl = (url, init) => {
+    const body = JSON.parse(init.body)
+    calls.push(body.provider)
+    if (body.action === 'balanceCredentialStatus') {
+      const configured = body.provider === 'digitalocean'
+      return Promise.resolve({ json: () => Promise.resolve({ ok: true, configured }) })
+    }
+    if (body.action === 'balance') {
+      return Promise.resolve({ json: () => Promise.resolve({ ok: true, providerName: 'DigitalOcean', totalBalance: 7.5, currency: 'USD' }) })
+    }
+    return Promise.resolve({ json: () => Promise.resolve({ ok: true }) })
+  }
+  const exports = await loadClient({ fetch: fetchImpl })
+  const hit = await exports.probeFirstBalance(['deepseek', 'siliconflow', 'digitalocean'])
+  assert.equal(hit.provider.id, 'digitalocean')
+  assert.equal(hit.amount, '$7.50')
+  // deepseek 只问了凭据（未配置即跳过，不发 balance 请求）
+  assert.equal(calls.filter((c) => c === 'deepseek').length, 1, 'deepseek 只应问一次凭据状态')
+  assert.equal(calls.filter((c) => c === 'siliconflow').length, 1)
+})
+
+test('probeFirstBalance prefers the earliest configured provider when several qualify', async () => {
+  const calls = []
+  const fetchImpl = (url, init) => {
+    const body = JSON.parse(init.body)
+    calls.push(body.action + ':' + body.provider)
+    if (body.action === 'balanceCredentialStatus') return Promise.resolve({ json: () => Promise.resolve({ ok: true, configured: true }) })
+    return Promise.resolve({ json: () => Promise.resolve({ ok: true, providerName: body.provider, totalBalance: 1, currency: 'CNY' }) })
+  }
+  const exports = await loadClient({ fetch: fetchImpl })
+  const hit = await exports.probeFirstBalance(['deepseek', 'siliconflow'])
+  assert.equal(hit.provider.id, 'deepseek', '多个都可用时取靠前的')
+  assert.equal(calls.filter((c) => c.startsWith('balance:')).length, 1, '命中后不应继续查询后面的')
+})
+
+test('probeFirstBalance returns null when nothing is configured', async () => {
+  const fetchImpl = () => Promise.resolve({ json: () => Promise.resolve({ ok: true, configured: false }) })
+  const exports = await loadClient({ fetch: fetchImpl })
+  assert.equal(await exports.probeFirstBalance(['deepseek', 'siliconflow']), null)
+})
+
+test('openBalanceView uses the captured openView handle to switch the session', async () => {
+  const storage = { _d: Object.create(null), getItem(k) { return this._d[k] ?? null }, setItem(k, v) { this._d[k] = String(v) }, removeItem(k) { delete this._d[k] } }
+  const exports = await loadClient({ storage })
   const h = makeCtx()
   exports.apply(h.ctx)
-  const side = h.registered.find((r) => r.slot === 'sidebar.footer.action')
-  const out = side.component({ wide: false })
-  assert.equal(out.type, exports.SidebarUsageEntry, '包装层应渲染 SidebarUsageEntry')
-  assert.equal(out.props.wide, false, 'wide 必须透传')
-  assert.equal(side.component({ wide: true }).props.wide, true)
+  // 宿主渲染 conversation.view 时注入 openView —— 触发捕获
+  const view = h.registered.find((r) => r.slot === 'conversation.view')
+  const opened = []
+  view.component({ openView: (v, focus) => opened.push([v, focus]) })
+  // 现在点击侧边栏
+  const ok = exports.openBalanceView('session-A')
+  assert.equal(ok, true, '有句柄时应即时切换')
+  assert.deepEqual(opened, [['balance-view', 'usage-plugin:open-balance']])
+  // 同时要落持久化偏好，保证下次进入该会话直接在余额页
+  assert.equal(JSON.parse(storage.getItem('dsh.conversation.session-A')).view, 'balance-view')
 })
 
-test('SidebarUsageEntry renders the wide layout', async () => {
-  const exports = await loadClient()
-  ELEMENTS.length = 0
-  exports.SidebarUsageEntry({ wide: true })
-  const classes = ELEMENTS.map((e) => e.props && e.props.className).filter(Boolean)
-  assert.ok(classes.includes('dsh-usage-side'), '展开态类名，实际: ' + JSON.stringify(classes))
-  assert.ok(classes.includes('dsh-usage-sideBtn'))
-  assert.ok(classes.includes('dsh-usage-sideLabel'), '展开态应显示文字标签')
-  assert.equal(classes.some((c) => c.includes('rail')), false, '展开态不应有 rail')
+test('openBalanceView ignores a handle captured for another session', async () => {
+  const storage = { _d: Object.create(null), getItem(k) { return this._d[k] ?? null }, setItem(k, v) { this._d[k] = String(v) }, removeItem(k) { delete this._d[k] } }
+  const exports = await loadClient({ storage })
+  const h = makeCtx({ session: 'session-A' })
+  exports.apply(h.ctx)
+  const view = h.registered.find((r) => r.slot === 'conversation.view')
+  const opened = []
+  view.component({ openView: (v) => opened.push(v) })   // 句柄属于 session-A
+  const ok = exports.openBalanceView('session-B')      // 却想切 session-B
+  assert.equal(ok, false, '不应把别的会话切走')
+  assert.deepEqual(opened, [])
+  // 但偏好仍要写入目标会话
+  assert.equal(JSON.parse(storage.getItem('dsh.conversation.session-B')).view, 'balance-view')
 })
 
-test('SidebarUsageEntry renders the collapsed rail layout', async () => {
-  const exports = await loadClient()
-  ELEMENTS.length = 0
-  exports.SidebarUsageEntry({ wide: false })
-  const classes = ELEMENTS.map((e) => e.props && e.props.className).filter(Boolean)
-  assert.ok(classes.includes('dsh-usage-side rail'), '收起态类名，实际: ' + JSON.stringify(classes))
-  assert.equal(classes.includes('dsh-usage-sideLabel'), false, '收起态不显示文字标签')
-})
-
-test('SidebarUsageEntry tolerates missing props', async () => {
-  const exports = await loadClient()
-  assert.doesNotThrow(() => exports.SidebarUsageEntry(undefined))
-  assert.doesNotThrow(() => exports.SidebarUsageEntry({}))
-})
-
-test('monthSummary only counts the current Beijing month', async () => {
-  const exports = await loadClient()
-  const now = Date.now()
-  // 记录里的消耗由后端算好（autoCost），前端只做汇总，因此测试要带上该字段。
-  const records = [
-    { time: now, autoCost: 1.5, provider: 'deepseek-official', model: 'deepseek-v4-pro' },
-    { time: now - 40 * 24 * 3600 * 1000, autoCost: 9.9, provider: 'deepseek-official', model: 'deepseek-v4-pro' }
-  ]
-  const s = exports.monthSummary(records)
-  assert.equal(s.calls, 1, '上月记录不应计入本月')
-  assert.equal(s.cost, 1.5, '只累计本月消耗')
-  assert.equal(exports.monthSummary([]).cost, 0, '空列表应返回 0')
-})
-
-test('the sidebar entry injects its stylesheet only once', async () => {
-  const styleTags = []
-  globalThis.document = {
-    head: { appendChild: (n) => styleTags.push(n) },
-    getElementById: () => null,
-    createElement: () => ({ id: '', textContent: '' })
-  }
-  try {
-    const exports = await loadClient()
-    const h = makeCtx()
-    exports.apply(h.ctx)
-    assert.equal(styleTags.filter((s) => s.id === 'dsh-usage-sidebar-style').length, 1)
-  } finally {
-    delete globalThis.document
-  }
+test('openBalanceView falls back to persisting the preference when no handle exists', async () => {
+  const storage = { _d: Object.create(null), getItem(k) { return this._d[k] ?? null }, setItem(k, v) { this._d[k] = String(v) }, removeItem(k) { delete this._d[k] } }
+  const exports = await loadClient({ storage })
+  const h = makeCtx()
+  exports.apply(h.ctx)
+  // 未渲染任何 conversation.view => 没有 openView 句柄，应退化为写偏好
+  const ok = exports.openBalanceView('session-A')
+  assert.equal(ok, false, '没有句柄时应返回 false')
+  const stored = JSON.parse(storage.getItem('dsh.conversation.session-A'))
+  assert.equal(stored.view, 'balance-view', '应把偏好写成余额视图')
 })
