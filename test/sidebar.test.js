@@ -183,3 +183,35 @@ test('openBalanceView falls back to persisting the preference when no handle exi
   const stored = JSON.parse(storage.getItem('dsh.conversation.session-A'))
   assert.equal(stored.view, 'balance-view', '应把偏好写成余额视图')
 })
+
+test('the entry label is the fixed 余额 text, not the provider name', async () => {
+  const exports = await loadClient()
+  // 测试环境为英文，t("余额") 解析为 "Balance"；关键是"固定文案"而非服务商名。
+  ELEMENTS.length = 0
+  exports.SidebarUsageEntry({ wide: true })
+  const texts = ELEMENTS.map((e) => (e.kids || []).filter((k) => typeof k === 'string')).flat()
+  assert.deepEqual(texts, ['Balance'], '标签应固定为「余额」，实际: ' + JSON.stringify(texts))
+  const btn = ELEMENTS.find((e) => e.props && e.props.className === 'dsh-usage-sideBtn')
+  assert.ok(btn, '应有按钮')
+  assert.ok(String(btn.props.title).includes('Balance'), '悬停提示应包含余额文案')
+})
+
+test('the entry switches views on double click, not on single click', async () => {
+  const exports = await loadClient()
+  const calls = []
+  ELEMENTS.length = 0
+  exports.SidebarUsageEntry({ wide: true, openBalanceView: () => calls.push('called') })
+  const btn = ELEMENTS.find((e) => e.props && e.props.className === 'dsh-usage-sideBtn')
+  assert.equal(btn.props.onClick, undefined, '不应再绑定单击（避免误触切走视图）')
+  assert.equal(typeof btn.props.onDoubleClick, 'function', '应绑定双击')
+  btn.props.onDoubleClick()
+  assert.deepEqual(calls, ['called'])
+})
+
+test('double click is safe when the host provides no navigation callback', async () => {
+  const exports = await loadClient()
+  ELEMENTS.length = 0
+  exports.SidebarUsageEntry({ wide: true })
+  const btn = ELEMENTS.find((e) => e.props && e.props.className === 'dsh-usage-sideBtn')
+  assert.doesNotThrow(() => btn.props.onDoubleClick())
+})
