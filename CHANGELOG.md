@@ -8,6 +8,19 @@
 
 ---
 
+## v1.16.5-local.4（本地构建 / Local build）
+
+### 修复 / Fixed
+
+- **隐藏宽度调整线时不得改动布局**（lib/client.js）：上一版用 \`display:none !important\` 隐藏调整线，并把标记类加在祖先容器上——前者会把元素盒从布局中移除，后者会波及容器与其它元素，导致用量/余额页的布局被改动。现改为**只改这两个元素自身的 inline style**：
+  - 用 \`visibility: hidden\` 而不是 \`display: none\`：visibility 保留盒模型，布局与 harness 原样逐像素一致，只是不可见；
+  - 不注入全局 CSS、不给任何祖先加类名；
+  - 同时置 \`pointer-events: none\`，避免看不见的线仍拦截拖拽；
+  - 卸载时逐一还原原值。
+- 单测新增布局护栏：断言实现中不得出现 \`display:none !important\` 与 \`classList.add\`，且必须使用 visibility/pointer-events。
+
+---
+
 ## v1.16.5-local.3（本地构建 / Local build）
 
 ### 修复 / Fixed

@@ -151,3 +151,15 @@ test('a corrupt stored preference never throws out of the component', async () =
   assert.doesNotThrow(() => { for (const fn of effects) if (typeof fn === 'function') { const c = fn(); if (typeof c === 'function') c() } })
   assert.equal(storage.getItem('dsh.conversation.A'), '{not json', '解析失败时保持原样')
 })
+
+test('hiding the width handles never removes them from layout (visibility, not display)', async () => {
+  // 这是布局回归的护栏：曾用 display:none + 祖先类名，导致用量/余额页布局被改动。
+  // 现在的约定是只改元素自身的 inline visibility / pointer-events——
+  // visibility 保留盒模型，布局与 harness 原样一致。
+  const fs = await import('node:fs')
+  const src = fs.readFileSync(CLIENT, 'utf8')
+  assert.equal(src.includes('display:none !important'), false, '不得用 display:none 隐藏（会把盒子移出布局）')
+  assert.equal(src.includes('classList.add'), false, '不得给祖先加类名（会波及容器与其它元素）')
+  assert.equal(src.includes('style.visibility = "hidden"'), true, '应使用 visibility:hidden 保留盒模型')
+  assert.equal(src.includes('style.pointerEvents = "none"'), true, '隐藏后应禁用指针事件')
+})
