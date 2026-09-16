@@ -8,13 +8,21 @@
 
 ---
 
+## v1.16.5-local.20（本地构建 / Local build）
+
+### 修复 / Fixes
+
+- **历史伪造 cacheWrite 的迁移判定反转为"已知上报者"名单，覆盖任意路由名**（lib/index.js）：v1.16.5-local.19 的白名单（deepseek / siliconflow / digitalocean 等）实测漏掉了伪造记录的真实 provider——harness 路由名 `buddy`（2,728 条）、`workbuddy`（406 条）、`codearts`（33 条），共 3,167 条、涉及 56 个老会话未被清零，老窗口合计仍虚高。现反转判定：除 `KNOWN_CACHE_WRITE_PROVIDERS`（当前为空——实测 dsh 生态全部 provider 都不上报缓存创建字段，重启后探针记录 write 全为 0）外，`cacheWriteTokens === inputTokens` 且 miss > 0 的历史记录一律视为伪造值在入库时清零。重启一次即批量修正老会话并落盘；未来真出现上报 cacheWrite 的 provider 时往该名单加名字即可。
+
+---
+
 ## v1.16.5-local.19（本地构建 / Local build）
 
 ### 修复 / Fixes
 
 - **「总 token」不再双计未命中，与宿主状态栏对齐**（lib/index.js、lib/scan.js、lib/client.js）：根因是旧版在**记录时**把 DeepSeek 系 provider 不上报的 `cacheWriteTokens` 兜底成 `inputTokens`（探针与事后扫描同口径），伪造出一笔与未命中相等的缓存写入；而四桶合计（input+cacheRead+cacheWrite+output）把它当独立桶相加，未命中因此被双计——弹窗「对话累计 总 token」、侧边栏会话条、用量页「总 token」全部比宿主状态栏恰好大出累计未命中数（实测某会话 miss=1,828,048：面板 236M vs 状态栏 235M，差额精确吻合）。
   - 记录层现在只存上游真实上报值（DeepSeek 系记 0）；「缓存写入」列的兜底移到**展示层**（画布表、记录表单元格与合计行、范围摘要行），展示效果不回退。
-  - 历史记录迁移：入库统一走 `normalizeRecord`（覆盖启动加载 / 旧目录迁移 / 导入），对已知从不上报 cacheWrite 的 provider（deepseek / deepseek-official / siliconflow / digital-ocean / digitalocean）中 `cacheWriteTokens === inputTokens` 的记录清零；升级后首次启动即落盘修正。
+  - 历史记录迁移：入库统一走 `normalizeRecord`（覆盖启动加载 / 旧目录迁移 / 导入），对已知从不上报 cacheWrite 的 provider（deepseek / deepseek-official / siliconflow / digital-ocean / digitalocean）中 `cacheWriteTokens === inputTokens` 的记录清零；升级后首次启动即落盘修正。（白名单实测漏掉 harness 路由名，**v1.16.5-local.20 已反转为"已知上报者"名单判定**。）
   - 连带修正用量页命中率分母混入伪造 write（hit/(hit+miss+write)）导致 DeepSeek 下比宿主偏低的问题——write 归 0 后分母自然回到 hit+miss。
   - 解决 v1.16.5-local.18 遗留的已知问题（「弹窗与状态栏差 1–2M，原因尚未定位」）。
 
