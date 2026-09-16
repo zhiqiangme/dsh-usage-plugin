@@ -8,6 +8,16 @@
 
 ---
 
+## v1.16.5-local.8（本地构建 / Local build）
+
+### 修复 / Fixed
+
+- **余额页的 provider 标签被均匀铺满整行**（lib/client.js）：v1.16.5-local.7 为把「帮助与说明」放到子页签栏右侧，给 \`st.subtabBar\` 加了 \`justifyContent: "space-between"\`。用量页的子页签外层包了 \`st.subtabGroup\`（两个子元素，正常），而余额页的 \`providers.map()\` 产生的是**多个直接子元素**，被 \`space-between\` 分散到整行两端；单个子元素时该属性又无效果。
+  - 现把余额页的标签同样包进 \`st.subtabGroup\`，两类页面的子页签栏结构一致：左侧成组靠左排列，右侧留给可选按钮。
+  - 用 headless Chrome 实测两种结构确认：包组后整组宽度紧凑（x=91–668），未包组时五个按钮分别落在 x=91/345/604/872/1165（铺满整行）。
+
+---
+
 ## v1.16.5-local.7（本地构建 / Local build）
 
 ### 界面 / UI
