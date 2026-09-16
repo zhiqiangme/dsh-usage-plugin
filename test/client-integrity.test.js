@@ -102,3 +102,29 @@ test('the four-bucket totals use exactly four terms', () => {
   assert.equal(/agg2\.input \+ agg2\.cacheRead \+ agg2\.cacheWrite \+ agg2\.output\)/.test(SOURCE), true,
     'turnTokens 应为四桶相加')
 })
+
+test('the token dialog uses theme variables instead of hardcoded light colors', () => {
+  // 弹窗此前写死 #ffffff / #1c2733 等浅色，在夜间模式下仍是白底黑字。
+  // 现在必须走宿主的 --dsw-alias-* 变量，随主题自动切换。
+  const start = SOURCE.indexOf('var __tok = {')
+  assert.ok(start > 0, '应能定位 __tok')
+  const end = SOURCE.indexOf('\n    };', start)
+  const block = SOURCE.slice(start, end)
+
+  // 底色与前景色必须来自主题变量
+  for (const token of ['TOK_BG', 'TOK_FG', 'TOK_BORDER']) {
+    assert.equal(block.includes(token), true, token + ' 应被使用')
+  }
+  assert.equal(/var\(--dsw-alias-bg-overlay/.test(SOURCE), true, '应引用 --dsw-alias-bg-overlay')
+  assert.equal(/var\(--dsw-alias-label-primary/.test(SOURCE), true, '应引用 --dsw-alias-label-primary')
+
+  // 不该再出现"面板底色写死为白 / 正文色写死为深灰"
+  assert.equal(/background:\s*"#ffffff"/.test(block), false, '不应把面板底色写死为 #ffffff')
+  assert.equal(/color:\s*"#1c2733"/.test(block), false, '不应把正文色写死为 #1c2733')
+  assert.equal(/background:\s*"#f5f7fa"/.test(block), false, '内层卡片底色不应写死')
+  assert.equal(/background:\s*"#f7f8fa"/.test(block), false, '模型卡底色不应写死')
+
+  // 允许保留的：遮罩/阴影用的黑色半透明（日夜通用）
+  const allowed = block.match(/rgba\(0,0,0[^)]*\)/g) || []
+  assert.ok(allowed.length <= 2, '只允许遮罩与阴影两处黑色半透明，实际: ' + allowed.length)
+})

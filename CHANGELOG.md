@@ -8,6 +8,24 @@
 
 ---
 
+## v1.16.5-local.18（本地构建 / Local build）
+
+### 界面 / UI
+
+- **「Token 明细」弹窗适配夜间模式**（lib/client.js）：弹窗此前把配色**写死**为浅色（`#ffffff` 面板底、`#1c2733` 正文、`#f5f7fa` / `#f7f8fa` 内层卡片、`#eef1f5` 进度条底、`#22a45d` 进度条），夜间模式下仍是白底黑字，与宿主主题割裂。
+  - 现全部改用宿主的主题变量：`--dsw-alias-bg-overlay`（面板底）、`--dsw-alias-bg-layer-2`（内层卡片）、`--dsw-alias-label-primary` / `-secondary`（文本层级）、`--dsw-alias-border-l1` / `-l2`（边框与分隔线）、`--dsw-alias-state-success-primary`（进度条）；每个变量都带浅色 fallback，变量缺失时仍可读。
+  - 遮罩与投影保留黑色半透明（`rgba(0,0,0,.45)` / `rgba(0,0,0,.4)`）——这两处在日夜模式下都通用。
+
+### 测试 / Tests
+
+- `test/client-integrity.test.js` 增至 6 例：弹窗必须使用主题变量、不得把面板底/正文/内层卡片写死为浅色、只允许保留遮罩与阴影两处黑色半透明。该用例已做**反向验证**：临时植回 `#ffffff` 时确实报错。
+
+### 已知问题 / Known issue
+
+- 弹窗「对话累计 总 token」与底部状态栏仍有约 1–2M 的差异（如 229M vs 227M），**原因尚未定位**。已验证的是：聚合算法与官方四桶口径逐值一致、`reasoning` 重复计算已修复，因此差异来自**数据源本身**——状态栏是会话投影（随事件即时更新），插件来自 `llm/stream` 探针记录（含轮询延迟与可能的窗口边界差异）。暂不处理。
+
+---
+
 ## v1.16.5-local.17（本地构建 / Local build）
 
 ### 修复 / Fixed
