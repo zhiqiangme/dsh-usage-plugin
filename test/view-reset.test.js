@@ -4,12 +4,15 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 /**
- * BUG 回归：点「用量」/「余额」页签后切走再切回，应当回到对话界面。
+ * BUG 回归：点「用量」/「余额」后切走会话再切回，应回到对话界面。
  *
- * 根因在 harness：conversation.view 的选择是**按会话持久化**的
- * （localStorage \`dsh.conversation.<sessionId>\`，见 dsh-client-ui-conversation 的
- * readConversationViewPreference / restoreView），切回会话时会恢复上次的页签。
- * 插件侧的修法是：订阅会话切换，在离开旧会话时把自己写入的那两个 view id 复位为 chat。
+ * 关键：harness 的 per-session store（defineStore({ persist: "dsh.conversation" })）
+ * 语义是「挂载时从 localStorage 读一次，之后每次变更写回」：
+ *     const raw = localStorage.getItem(name); if (raw) store.setState(JSON.parse(raw));
+ *     store.subscribe(next => localStorage.setItem(name, JSON.stringify(next)));
+ * 渲染读的是**内存状态**，所以只改 localStorage 而不改内存是无效的
+ * （store 下次变更还会把旧值写回）。上一版的单测正是漏了这一点才假绿。
+ * 这里的断言因此聚焦"是否调用了 openView（改内存）"而不是只看存储。
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -19,131 +22,132 @@ let mounts = 0
 function makeStorage(seed) {
   const data = Object.assign(Object.create(null), seed || {})
   return {
-    _d: data,
     getItem(k) { return k in data ? data[k] : null },
     setItem(k, v) { data[k] = String(v) },
     removeItem(k) { delete data[k] }
   }
 }
 
-async function loadClient(storage) {
+/** 加载插件并把 conversation.view 注册项抓出来。 */
+async function loadViews(storage, options) {
+  const opts = options || {}
   globalThis.window = { __ModuleLoader__: null, localStorage: storage }
   Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US' }, configurable: true, writable: true })
   let captured = null
   window.__ModuleLoader__ = { load(d) { captured = d } }
   const url = pathToFileURL(CLIENT).href + '?mount=' + (++mounts)
   await import(url)
-  if (!captured) throw new Error('ModuleLoader.load was not called')
-  return captured.factory((n) => {
-    if (n === 'react') return { createElement: () => null }
+  const exports = captured.factory((n) => {
+    if (n === 'react') return opts.react || { createElement: () => null, useEffect: () => {}, useRef: () => ({ current: null }) }
     throw new Error('unexpected require: ' + n)
   })
-}
-
-/** 造一个最小可用的客户端 ctx：slots + sessions，并把 effect 立即执行。 */
-function makeCtx() {
-  const listeners = []
-  const state = { current: 'session-A' }
-  const disposers = []
   const registered = []
-  const sessions = {
-    list: {
-      getSnapshot: () => ({ current: state.current }),
-      subscribe(fn) { listeners.push(fn); return () => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1) } }
-    }
-  }
-  const slots = {
-    inject() {},
-    register(options, render) { registered.push(options); return () => {} },
-    subscribe() { return () => {} },
-    entries() { return [] }
-  }
   const ctx = {
     get(name) {
-      if (name === 'slots') return slots
-      if (name === 'sessions') return sessions
+      if (name === 'slots') {
+        return {
+          inject(_slot, fn) { fn() },
+          register(registration, component) { registered.push({ registration, component }); return () => {} },
+          subscribe: () => () => {},
+          entries: () => []
+        }
+      }
+      if (name === 'sessions') return opts.sessions
       return undefined
     },
-    effect(fn) { const d = fn(); if (typeof d === 'function') disposers.push(d); return () => {} },
+    effect(fn) { fn(); return () => {} },
     on() {},
     logger: { warn() {}, info() {} }
   }
-  return {
-    ctx, registered,
-    /** 切换当前会话并触发订阅者，模拟用户在侧边栏点另一个对话。 */
-    switchTo(id) { state.current = id; for (const fn of [...listeners]) fn() },
-    listenerCount: () => listeners.length
-  }
+  exports.apply(ctx)
+  return { exports, registered }
 }
 
-const KEY = 'dsh.conversation'
-
-test('switching away from a session resets the plugin view preference to chat', async () => {
-  const storage = makeStorage({
-    // 用户在 session-A 里点过「用量」，harness 会把这个偏好持久化下来
-    [KEY + '.session-A']: JSON.stringify({ draft: 'hello', view: 'usage-cost-view', viewRequest: null }),
-    // 另一个会话停在「余额」
-    [KEY + '.session-B']: JSON.stringify({ draft: '', view: 'balance-view', viewRequest: null })
-  })
-  const exports = await loadClient(storage)
-  const h = makeCtx()
-  exports.apply(h.ctx)
-
-  assert.ok(h.listenerCount() > 0, '应当订阅了会话切换')
-
-  // A -> B：离开 A 时把 A 的偏好复位
-  h.switchTo('session-B')
-  const a = JSON.parse(storage.getItem(KEY + '.session-A'))
-  assert.equal(a.view, 'chat', '离开后 session-A 应落回对话界面')
-  assert.equal(a.draft, 'hello', '同一存储里的草稿必须保留')
-  assert.equal(a.viewRequest, null)
-
-  // B 的偏好此刻不动，等离开 B 时才复位
-  assert.equal(JSON.parse(storage.getItem(KEY + '.session-B')).view, 'balance-view')
-
-  h.switchTo('session-A')
-  assert.equal(JSON.parse(storage.getItem(KEY + '.session-B')).view, 'chat', '离开 B 后同样复位')
-})
-
-test('the built-in trajectory view and unrelated sessions are never touched', async () => {
-  const storage = makeStorage({
-    // 内置「轨迹」页签：不是本插件注册的 id，必须原样保留
-    [KEY + '.session-A']: JSON.stringify({ draft: '', view: 'trajectory', viewRequest: { view: 'trajectory', focus: 'x' } })
-  })
-  const exports = await loadClient(storage)
-  const h = makeCtx()
-  exports.apply(h.ctx)
-  h.switchTo('session-B')
-  const a = JSON.parse(storage.getItem(KEY + '.session-A'))
-  assert.equal(a.view, 'trajectory', '内置页签的选择不归插件管')
-  assert.deepEqual(a.viewRequest, { view: 'trajectory', focus: 'x' })
-})
-
-test('a session with no stored preference is left alone', async () => {
+test('the registered views expose a component factory (pluginView wiring)', async () => {
   const storage = makeStorage({})
-  const exports = await loadClient(storage)
-  const h = makeCtx()
-  exports.apply(h.ctx)
-  h.switchTo('session-B')
-  assert.equal(storage.getItem(KEY + '.session-A'), null, '没有偏好时不应凭空写入')
-})
-
-test('corrupt storage never throws out of the session subscriber', async () => {
-  const storage = makeStorage({ [KEY + '.session-A']: '{not json' })
-  const exports = await loadClient(storage)
-  const h = makeCtx()
-  exports.apply(h.ctx)
-  h.switchTo('session-B')
-  assert.equal(storage.getItem(KEY + '.session-A'), '{not json', '解析失败时保持原样')
-})
-
-test('missing sessions service degrades instead of failing activation', async () => {
-  const storage = makeStorage({})
-  const exports = await loadClient(storage)
-  const ctx = {
-    get(name) { return name === 'slots' ? { inject() {}, register: () => () => {}, subscribe: () => () => {}, entries: () => [] } : undefined },
-    effect(fn) { fn(); return () => {} },
-    on() {}
+  const { registered } = await loadViews(storage)
+  assert.equal(registered.length >= 2, true, '两个 conversation.view 都应注册')
+  const ids = registered.map((r) => r.registration.id)
+  assert.deepEqual(ids.slice(0, 2), ['usage-cost-view', 'balance-view'])
+  for (const r of registered.slice(0, 2)) {
+    assert.equal(typeof r.component, 'function', r.registration.id + ' 应拿到一个组件函数')
   }
-  assert.doesNotThrow(() => exports.apply(ctx), '没有 sessions 服务时仍要能激活')
+})
+
+test('leaving the session calls openView("chat") and resets the stored preference', async () => {
+  const effects = []
+  const fakeReact = {
+    createElement: () => null,
+    useEffect(fn) { effects.push(fn); return undefined },
+    useRef(initial) { return { current: initial } }
+  }
+  const storage = makeStorage({ 'dsh.conversation.A': JSON.stringify({ draft: 'hi', view: 'usage-cost-view', viewRequest: null }) })
+  const current = { value: 'A' }
+  const { registered } = await loadViews(storage, {
+    react: fakeReact,
+    sessions: { list: { getSnapshot: () => ({ current: current.value }) } }
+  })
+  const view = registered.find((r) => r.registration.id === 'usage-cost-view')
+  const opened = []
+  view.component({ openView: (v) => opened.push(v) })
+  assert.equal(effects.length >= 2, true, '组件应声明多个 effect')
+
+  // 切走会话：current 变 B，然后组件卸载
+  current.value = 'B'
+  for (const fn of effects) if (typeof fn === 'function') { const cleanup = fn(); if (typeof cleanup === 'function') cleanup() }
+  assert.deepEqual(opened, ['chat'], '切走会话时应调用 openView("chat") 改内存态')
+  const stored = JSON.parse(storage.getItem('dsh.conversation.A'))
+  assert.equal(stored.view, 'chat', '持久化偏好也要复位')
+  assert.equal(stored.draft, 'hi', '同一条存储的其它字段保留')
+})
+
+test('switching between the two plugin panels does NOT bounce back to chat', async () => {
+  const effects = []
+  const fakeReact = { createElement: () => null, useEffect(fn) { effects.push(fn); return undefined }, useRef(i) { return { current: i } } }
+  const storage = makeStorage({ 'dsh.conversation.A': JSON.stringify({ draft: '', view: 'usage-cost-view', viewRequest: null }) })
+  const { registered } = await loadViews(storage, {
+    react: fakeReact,
+    sessions: { list: { getSnapshot: () => ({ current: 'A' }) } }
+  })
+  const view = registered.find((r) => r.registration.id === 'usage-cost-view')
+  const opened = []
+  view.component({ openView: (v) => opened.push(v) })
+  // 会话仍是 A：卸载（换页签）不应复位
+  for (const fn of effects) if (typeof fn === 'function') { const c = fn(); if (typeof c === 'function') c() }
+  assert.deepEqual(opened, [], '同一会话内换页签不应弹回对话')
+  assert.equal(JSON.parse(storage.getItem('dsh.conversation.A')).view, 'usage-cost-view')
+})
+
+test('a built-in trajectory preference is never overwritten', async () => {
+  const effects = []
+  const fakeReact = { createElement: () => null, useEffect(fn) { effects.push(fn); return undefined }, useRef(i) { return { current: i } } }
+  const storage = makeStorage({ 'dsh.conversation.A': JSON.stringify({ draft: '', view: 'trajectory', viewRequest: null }) })
+  const current = { value: 'A' }
+  const { registered } = await loadViews(storage, { react: fakeReact, sessions: { list: { getSnapshot: () => ({ current: current.value }) } } })
+  const view = registered.find((r) => r.registration.id === 'usage-cost-view')
+  view.component({ openView: () => {} })
+  current.value = 'B'
+  for (const fn of effects) if (typeof fn === 'function') { const c = fn(); if (typeof c === 'function') c() }
+  assert.equal(JSON.parse(storage.getItem('dsh.conversation.A')).view, 'trajectory', '内置页签偏好必须保持原样')
+})
+
+test('missing sessions service degrades without throwing', async () => {
+  const fakeReact = { createElement: () => null, useEffect(fn) { fn(); return undefined }, useRef(i) { return { current: i } } }
+  const storage = makeStorage({})
+  const { registered } = await loadViews(storage, { react: fakeReact, sessions: undefined })
+  const view = registered.find((r) => r.registration.id === 'usage-cost-view')
+  assert.doesNotThrow(() => view.component({ openView: () => {} }))
+})
+
+test('a corrupt stored preference never throws out of the component', async () => {
+  const effects = []
+  const fakeReact = { createElement: () => null, useEffect(fn) { effects.push(fn); return undefined }, useRef(i) { return { current: i } } }
+  const storage = makeStorage({ 'dsh.conversation.A': '{not json' })
+  const current = { value: 'A' }
+  const { registered } = await loadViews(storage, { react: fakeReact, sessions: { list: { getSnapshot: () => ({ current: current.value }) } } })
+  const view = registered.find((r) => r.registration.id === 'usage-cost-view')
+  view.component({ openView: () => {} })
+  current.value = 'B'
+  assert.doesNotThrow(() => { for (const fn of effects) if (typeof fn === 'function') { const c = fn(); if (typeof c === 'function') c() } })
+  assert.equal(storage.getItem('dsh.conversation.A'), '{not json', '解析失败时保持原样')
 })

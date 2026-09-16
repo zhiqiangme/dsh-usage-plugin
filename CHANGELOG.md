@@ -8,6 +8,18 @@
 
 ---
 
+## v1.16.5-local.3（本地构建 / Local build）
+
+### 修复 / Fixed
+
+- **重做 BUG1 的修复**（lib/client.js，上一版 1.16.5-local.2 的修法无效）：上一版只改 localStorage，但 harness 的 per-session store 语义是「挂载时读一次 localStorage，之后每次变更写回」，**渲染读的是内存状态**（useStore(s => s.view)），因此改存储不会改变当前渲染，store 下次变更还会把旧值写回覆盖。现在改为用 harness 传给每个 conversation.view 的 **openView prop**（内部走 activateView + store.openView，同时更新内存与持久化）。
+  - 复位时机放在**组件卸载**且**会话已切换**时：手动点页签同样会让组件挂载/卸载，若在挂载时复位会把用户立刻弹回对话、永远打不开面板。卸载时用挂载前的会话 id 与当前 id 比对，即可精确区分"切走会话"与"切换页签"。
+  - 只复位本插件写入的两个 view id；内置「轨迹」页签的偏好保持不变。
+  - 单测补齐：新增"同一会话内切换两个插件页签不得弹回对话"这条关键防护（上一版缺此用例才假绿）。
+- **用量/余额页显示对话正文的宽度调整线**（lib/client.js）：harness 在 phase === "active" 时给每个 conversation.view 都渲染一对 WidthHandle，且它们是视图容器的**兄弟节点**（不在插件容器内，普通后代选择器无效）。现在从插件容器向上找到包含调整线的最近祖先并加标记类，CSS 用 [class*=widthHandle] 属性选择器匹配（不依赖打包后的哈希类名），卸载时移除标记。
+
+---
+
 ## v1.16.5-local.2（本地构建 / Local build）
 
 ### 修复 / Fixed
