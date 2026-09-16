@@ -96,49 +96,44 @@ test('balanceDisplayOf returns null when no amount is available', async () => {
   assert.equal(exports.balanceDisplayOf('deepseek', { ok: true, totalBalance: '' }), null)
 })
 
-test('probeFirstBalance picks the FIRST configured provider, skipping unconfigured ones', async () => {
-  // siliconflow 未配置凭据 -> 跳过；digitalocean 已配置且查到余额 -> 命中它。
-  const calls = []
+test('probeFirstBalance picks the FIRST provider that returns a balance', async () => {
+  // 探测直接查余额，用结果判定可用性（不再依赖 balanceCredentialStatus：
+  // 它对 DeepSeek 这类服务商返回 ok:false，会把 DeepSeek 误跳过）。
+  const asked = []
   const fetchImpl = (url, init) => {
     const body = JSON.parse(init.body)
-    calls.push(body.provider)
-    if (body.action === 'balanceCredentialStatus') {
-      const configured = body.provider === 'digitalocean'
-      return Promise.resolve({ json: () => Promise.resolve({ ok: true, configured }) })
-    }
-    if (body.action === 'balance') {
-      return Promise.resolve({ json: () => Promise.resolve({ ok: true, providerName: 'DigitalOcean', totalBalance: 7.5, currency: 'USD' }) })
-    }
-    return Promise.resolve({ json: () => Promise.resolve({ ok: true }) })
+    asked.push(body.provider)
+    if (body.provider === 'siliconflow') return Promise.resolve({ json: () => Promise.resolve({ ok: false, errorCode: 'missing-credential' }) })
+    if (body.provider === 'digitalocean') return Promise.resolve({ json: () => Promise.resolve({ ok: true, providerName: 'DigitalOcean', totalBalance: '7.50', currency: 'USD' }) })
+    return Promise.resolve({ json: () => Promise.resolve({ ok: true, providerName: 'DeepSeek', totalBalance: '288.73', currency: 'CNY' }) })
   }
   const exports = await loadClient({ fetch: fetchImpl })
   const hit = await exports.probeFirstBalance(['deepseek', 'siliconflow', 'digitalocean'])
-  assert.equal(hit.provider.id, 'digitalocean')
-  assert.equal(hit.amount, '$7.50')
-  // deepseek 只问了凭据（未配置即跳过，不发 balance 请求）
-  assert.equal(calls.filter((c) => c === 'deepseek').length, 1, 'deepseek 只应问一次凭据状态')
-  assert.equal(calls.filter((c) => c === 'siliconflow').length, 1)
+  assert.equal(hit.provider.id, 'deepseek', '第一个查得到的即命中')
+  assert.equal(hit.amount, '¥288.73')
+  assert.deepEqual(asked, ['deepseek'], '命中后不应继续查询后面的服务商')
 })
 
-test('probeFirstBalance prefers the earliest configured provider when several qualify', async () => {
-  const calls = []
+test('probeFirstBalance skips providers whose balance query fails', async () => {
+  const asked = []
   const fetchImpl = (url, init) => {
     const body = JSON.parse(init.body)
-    calls.push(body.action + ':' + body.provider)
-    if (body.action === 'balanceCredentialStatus') return Promise.resolve({ json: () => Promise.resolve({ ok: true, configured: true }) })
-    return Promise.resolve({ json: () => Promise.resolve({ ok: true, providerName: body.provider, totalBalance: 1, currency: 'CNY' }) })
+    asked.push(body.provider)
+    if (body.provider === 'deepseek') return Promise.resolve({ json: () => Promise.resolve({ ok: false, errorCode: 'missing-credential' }) })
+    return Promise.resolve({ json: () => Promise.resolve({ ok: true, providerName: 'SiliconFlow', totalBalance: '3.00', currency: 'CNY' }) })
   }
   const exports = await loadClient({ fetch: fetchImpl })
   const hit = await exports.probeFirstBalance(['deepseek', 'siliconflow'])
-  assert.equal(hit.provider.id, 'deepseek', '多个都可用时取靠前的')
-  assert.equal(calls.filter((c) => c.startsWith('balance:')).length, 1, '命中后不应继续查询后面的')
+  assert.equal(hit.provider.id, 'siliconflow', '失败的要跳过，取下一个')
+  assert.deepEqual(asked, ['deepseek', 'siliconflow'])
 })
 
-test('probeFirstBalance returns null when nothing is configured', async () => {
-  const fetchImpl = () => Promise.resolve({ json: () => Promise.resolve({ ok: true, configured: false }) })
+test('probeFirstBalance returns null when every provider fails', async () => {
+  const fetchImpl = () => Promise.resolve({ json: () => Promise.resolve({ ok: false, errorCode: 'missing-credential' }) })
   const exports = await loadClient({ fetch: fetchImpl })
   assert.equal(await exports.probeFirstBalance(['deepseek', 'siliconflow']), null)
 })
+
 
 test('openBalanceView uses the captured openView handle to switch the session', async () => {
   const storage = { _d: Object.create(null), getItem(k) { return this._d[k] ?? null }, setItem(k, v) { this._d[k] = String(v) }, removeItem(k) { delete this._d[k] } }
@@ -214,4 +209,39 @@ test('double click is safe when the host provides no navigation callback', async
   exports.SidebarUsageEntry({ wide: true })
   const btn = ELEMENTS.find((e) => e.props && e.props.className === 'dsh-usage-sideBtn')
   assert.doesNotThrow(() => btn.props.onDoubleClick())
+})
+
+test('sidebar provider preference defaults to auto and rejects unknown values', async () => {
+  const storage = { _d: Object.create(null), getItem(k) { return this._d[k] ?? null }, setItem(k, v) { this._d[k] = String(v) }, removeItem(k) { delete this._d[k] } }
+  const exports = await loadClient({ storage })
+  assert.equal(exports.readSidebarProviderPref(), 'auto', '默认应为自动')
+  assert.equal(exports.writeSidebarProviderPref('siliconflow'), 'siliconflow')
+  assert.equal(exports.readSidebarProviderPref(), 'siliconflow', '应可读回')
+  assert.equal(exports.writeSidebarProviderPref('not-a-provider'), 'auto', '未知值应回落到自动')
+  assert.equal(exports.readSidebarProviderPref(), 'auto')
+})
+
+test('changing the preference notifies subscribers so the entry refreshes', async () => {
+  const exports = await loadClient()
+  const seen = []
+  const unsub = exports.subscribeSidebarProviderPref((v) => seen.push(v))
+  exports.writeSidebarProviderPref('digitalocean')
+  exports.writeSidebarProviderPref('auto')
+  unsub()
+  exports.writeSidebarProviderPref('deepseek')
+  assert.deepEqual(seen, ['digitalocean', 'auto'], '退订后不应再收到通知')
+})
+
+test('a fixed preference queries only that provider', async () => {
+  const asked = []
+  const fetchImpl = (url, init) => {
+    const body = JSON.parse(init.body)
+    asked.push(body.provider)
+    return Promise.resolve({ json: () => Promise.resolve({ ok: true, providerName: body.provider, totalBalance: '1.00', currency: 'CNY' }) })
+  }
+  const exports = await loadClient({ fetch: fetchImpl })
+  exports.writeSidebarProviderPref('digitalocean')
+  const hit = await exports.probeFirstBalance([exports.readSidebarProviderPref()])
+  assert.equal(hit.provider.id, 'digitalocean')
+  assert.deepEqual(asked, ['digitalocean'], '固定选择时只查该服务商')
 })

@@ -8,6 +8,27 @@
 
 ---
 
+## v1.16.5-local.12（本地构建 / Local build）
+
+### 修复 / Fixed
+
+- **左下角余额一直不显示数字**（lib/client.js）：根因是探测时先用 `balanceCredentialStatus` 判断可用性，而该接口只回答"余额页能否管理此服务商的凭据"，对 DeepSeek 这类固定使用 `DEEPSEEK_API_KEY` 的服务商会返回 `ok:false`（`credential-management-unsupported`），导致 DeepSeek 被**误跳过**，后续服务商又都未配置，于是没有任何数值。
+  - 现改为**直接用 `balance` 请求的结果判定**：`ok:true` 且能解析出金额即命中；失败（如 `missing-credential`）则跳到下一个。命中后立即停止。
+  - 已用运行中的服务实测：DeepSeek 返回 `288.73`，确认可命中。
+
+### 新增 / New
+
+- **余额页新增「侧边栏设置」**（lib/client.js）：位于余额页工具栏（与用量页「帮助与说明」同一位置），展开后选择左下角「余额」入口显示哪个服务商的余额。
+  - 选项：**自动（取靠前的可用者）** + 四个服务商（AMD GPU Cloud 标记为不可查询并禁用）。
+  - 选择写入 `localStorage`（键 `dsh-usage-plugin.sidebarProvider`），并通过订阅广播让侧边栏**立即重新取数**，无需刷新页面。
+  - 固定某个服务商时只查询它；查询失败会清空数值，避免展示上一个服务商的过期数字。
+
+### 测试 / Tests
+
+- `test/sidebar.test.js` 扩到 16 例：探测改为"直接查余额"后的跳过/命中即停/全部失败返回 null、偏好默认 `auto` 与非法值回落、偏好变更广播与退订、固定偏好只查该服务商。
+
+---
+
 ## v1.16.5-local.11（本地构建 / Local build）
 
 ### 变更 / Changed
