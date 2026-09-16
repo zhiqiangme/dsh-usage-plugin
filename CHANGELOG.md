@@ -8,6 +8,20 @@
 
 ---
 
+## v1.16.5-local.15（本地构建 / Local build）
+
+### 修复 / Fixed
+
+- **按钮一直「获取中…」、弹窗显示「无 Token 数据」**（lib/client.js，修正 v1.16.5-local.14 的遗漏）：v14 改了窗口取法，但**用错了 hook** —— 读节点用的是 `props.useSession`，而会话快照里**没有** `chat.nodes`；节点挂在 **Chat 快照**上，必须用 `props.useChat`（官方 `TurnTailNodeView` 与 `ApprovalCommand` 都是 `useChat((s) => s.nodes…)`）。用错 hook 导致窗口永远取不到，effect 提前返回，界面停在初始态。
+  - 现改用 `useChat`，按官方结构读 `node.data.finalNode`（同时兼容 `finalNode` 直接挂在节点上的形状）与 `location.turn.start/end`。
+  - 取不到窗口时明确置为 `idle`（按钮显示 `—`），**不会停在 loading**，也不会发无意义的请求。
+
+### 测试 / Tests
+
+- 新增 `test/turn-window.test.js`（4 例）：必须用 `useChat` 且不得用 `useSession` 读节点；请求窗口等于轮次边界（`from`/`to` 精确到 turn 的 start/end）而非整场会话；取不到窗口时不发请求；`finalNode` 挂在节点自身时同样可用。
+
+---
+
 ## v1.16.5-local.14（本地构建 / Local build）
 
 ### 修复 / Fixed
