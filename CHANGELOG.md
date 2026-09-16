@@ -10,6 +10,10 @@
 
 ## v1.15.0 (未发布 / Unreleased)
 
+### 界面 / UI
+
+- **Tab 名称精简**（`lib/client.js`）：WebUI 顶部两个 tab 由「用量与消耗」「剩余余额查询」改为 **「用量」「余额」**，「会话/设置」两处入口与面板内标题同步；英文词条相应改为 `Usage` / `Balance`。只改文案，slot id（`usage-cost-view` / `balance-view` / `usage-cost` / `balance`）、排序、面板结构与全部功能均不变。
+
 ### 新增 / Added
 
 - **事后扫描（历史回填），与实时探针并存**（新增 `lib/scan.js`，`lib/index.js` 集成）：插件此前只在 `llm/stream` 实时捕获调用，因此**插件激活之前**的用量完全缺失。现在新增第二条数据通道：经 Harness 的 `ctx.sessionPersistence`（`list()` + `open(id,'read')`，兼容旧版 `listSnapshots()` / `readFrom()`）读取已落盘的事件日志，把历史 `assistant/message.data.usage` 与 v1 `assistant/chunk.data.chunk.usage` 归约成与探针同形状的记录，写入同一个 `records` 数组。两条通道互补：探针字段全但只覆盖激活后，扫描覆盖历史但缺 `purpose`/`finishReason`。
