@@ -8,6 +8,21 @@
 
 ---
 
+## v1.16.5-local.16（本地构建 / Local build）
+
+### 修复 / Fixed
+
+- **点击「本轮 token」后按钮消失、弹窗打不开**（lib/client.js）：浏览器控制台报 `ReferenceError: stepStart is not defined`（`turnStats` → `body` → `MessageTokenAction`），随后 harness 记录 `slot entry crashed in 'conversation.chat.assistant-actions'` —— slot 的错误边界把整个条目卸载了，于是按钮消失、弹窗自然打不开。
+  - 根因：v1.16.5-local.14 把窗口变量从 `stepStart` 改为 `turnStart` 时，**只改了取值处，漏改了 `turnStats()` 里计算耗时的引用**。
+  - 现改为 `turnStart`（本轮耗时 = 轮次结束 − 轮次开始）。
+- 说明：我先前把症状归因于"portal 不能作为子节点"是**错误**的——查上游 1.16.5 后发现它用的是一模一样的写法；该错误改动已完全撤销，代码与上游写法一致。
+
+### 测试 / Tests
+
+- 新增 `test/client-integrity.test.js`（3 例）：禁止引用已删除的 `stepStart`、`turnStats` 内只允许已声明标识符、client 包可被解析。该测试已做**反向验证**：临时植回旧 bug 时确实报错（`stepStart 不应再出现在代码里`），还原后通过。
+
+---
+
 ## v1.16.5-local.15（本地构建 / Local build）
 
 ### 修复 / Fixed
