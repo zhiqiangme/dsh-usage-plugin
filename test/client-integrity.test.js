@@ -78,3 +78,27 @@ test('the client bundle parses cleanly', () => {
     'client.js 应可解析'
   )
 })
+
+test('reasoning tokens are never added to a total (already inside outputTokens)', () => {
+  // dsh-token-meter 的 TokenUsageProjection 明确写：四个桶互不相交，
+  // 且 "reasoning tokens are already included in outputTokens and are not
+  // accumulated again"。多加一遍会让累计值比宿主状态栏偏大（实测差 0.3–1M）。
+  const lines = SOURCE.split(/\r?\n/)
+  const offenders = []
+  lines.forEach((line, i) => {
+    // 只看代码，跳过注释
+    const code = line.replace(/\/\/.*$/, '')
+    if (/\+\s*totalReason\b/.test(code)) offenders.push((i + 1) + ': ' + line.trim())
+    if (/\+\s*(convo|agg2)\.reasoning\b/.test(code)) offenders.push((i + 1) + ': ' + line.trim())
+    if (/\+\s*\(?\s*(r|rr|br|rec)\.reasoningTokens/.test(code)) offenders.push((i + 1) + ': ' + line.trim())
+  })
+  assert.deepEqual(offenders, [], '不得把 reasoning 计入总量: ' + offenders.join(' | '))
+})
+
+test('the four-bucket totals use exactly four terms', () => {
+  // 正例：确认关键位置确实是四桶相加（input/cacheRead/cacheWrite/output）
+  assert.equal(/convo\.input \+ convo\.cacheRead \+ convo\.cacheWrite \+ convo\.output\)/.test(SOURCE), true,
+    'convoTokens 应为四桶相加')
+  assert.equal(/agg2\.input \+ agg2\.cacheRead \+ agg2\.cacheWrite \+ agg2\.output\)/.test(SOURCE), true,
+    'turnTokens 应为四桶相加')
+})

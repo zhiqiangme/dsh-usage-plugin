@@ -8,6 +8,22 @@
 
 ---
 
+## v1.16.5-local.17（本地构建 / Local build）
+
+### 修复 / Fixed
+
+- **累计 token 比宿主状态栏偏大**（lib/client.js + lib/scan.js）：实测同一会话，弹窗「对话累计」比底部状态栏多 0.3–1M。
+  - **主因：`reasoningTokens` 被重复累加**。宿主 `dsh-token-meter` 的 `TokenUsageProjection` 明确写着四个桶互不相交，且 *"reasoning tokens are already included in `outputTokens` and are not accumulated again"*。插件此前把 reasoning 当独立桶又加了一遍（`+ convo.reasoning` / `+ totalReason` / `+ r.reasoningTokens`），共 3 处，现已全部改为四桶口径（uncachedInput / cacheRead / cacheWrite / output）。
+  - **顺带对齐取值路径**：官方 `usageOf` 在 `assistant/message` 顶层无 `usage` 时会**回退到 stream 里最后一个 usage chunk**，且 `assistant/attempt` 也走这条。插件此前只做前者，已补齐（`lib/scan.js` 的 `sampleOfEvent` + 新增 `lastStreamUsage`）。
+  - 已用真实会话日志交叉验证：官方投影口径与插件口径在四桶相加下**逐值一致（差异 0）**。
+
+### 测试 / Tests
+
+- `test/scan.test.js` 增至 20 例：`assistant/attempt` 从 stream 取 usage、顶层 usage 优先、取最后一个 usage chunk。
+- `test/client-integrity.test.js` 增至 5 例：禁止把 reasoning 计入任何总量、关键位置必须是四桶相加。
+
+---
+
 ## v1.16.5-local.16（本地构建 / Local build）
 
 ### 修复 / Fixed
