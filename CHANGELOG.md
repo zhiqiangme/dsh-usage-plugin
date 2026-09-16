@@ -8,6 +8,23 @@
 
 ---
 
+## v1.16.5-local.9（本地构建 / Local build）
+
+### 新增 / New
+
+- **侧边栏底部入口（「设置」上方）**（lib/client.js）：注册 harness 的 `sidebar.footer.action` 槽位（`kind: list`、`scope: root`，渲染在 `sidebar.settings` 之上），显示**本月已消耗**金额，每 30 秒随用量数据刷新。
+  - id 用本插件自己的 `usage-cost-side`（新增一格），**不复用内置 `cordis-panel` 的 id**（复用会替换该格）；`order: 10` 与内置条目并列。
+  - 展开态显示「柱状图图标 + 本月已消耗 + 金额」；侧边栏收起时自动收成圆形图标（类名叠加 `rail`，与 `dsh-client-ui-cordis` 的做法一致）。
+  - 样式在运行时注入一份 `<style id="dsh-usage-sidebar-style">`，配色走 harness 主题变量（`--dsw-alias-label-primary` / `--dsw-alias-interactive-bg-hover-solid` 等），自动适配深浅色皮肤。
+  - 数据复用现有 `POST /usage/api { action: "list" }`，按北京时间自然月汇总（与概览页「本月已消耗」同口径）。
+- 顺带修掉 `lib/client.js` 末尾 **`exports.__i18n` 重复定义两块**的遗留问题。
+
+### 测试 / Tests
+
+- 新增 `test/sidebar.test.js`（7 例）：槽位与 id 注册、`wide` 透传、展开/收起两种布局、缺省 props 容错、本月汇总只统计当月且空列表返回 0、样式只注入一次。
+
+---
+
 ## v1.16.5-local.8（本地构建 / Local build）
 
 ### 修复 / Fixed
