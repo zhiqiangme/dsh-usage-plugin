@@ -148,7 +148,7 @@ test('probe and scan source never fabricate cacheWrite from miss again', () => {
 test('scanRecordKey keeps rescanning idempotent via turn/step', () => {
   const first = message(4, 1000, 3, 2, { inputTokens: 1 }, 'p', 'm')
   const scanned = reduceSessionEvents([first], { sessionId: 's' }).records
-  assert.equal(scanRecordKey(scanned[0]), 's|3|2')
+  assert.equal(scanRecordKey(scanned[0]), 's|slot4')
 
   const records = []
   const one = mergeScannedRecords(records, scanned)
@@ -175,16 +175,16 @@ test('mergeScannedRecords never overwrites a live probe record by default', () =
 })
 
 test('deep mode absorbs the probe row for the same call and keeps its extra fields', () => {
-  const records = [probeRecord(1_000_000, 'deepseek-v4-pro', 's1', { purpose: 'compaction', reasoningTokens: 12 })]
+  const records = [probeRecord(1_000_000, 'deepseek-v4-pro', 's1', { purpose: '', inputTokens: 2112, outputTokens: 351, cacheReadTokens: 9472, cacheWriteTokens: 0, reasoningTokens: 12, usdCnyRate: 7.1, fxDate: '2026-09-01' })]
   const scanned = reduceSessionEvents([
-    message(0, 1_000_400, 4, 1, { inputTokens: 2112, outputTokens: 351, cacheReadTokens: 9472 }, 'deepseek-official', 'deepseek-v4-pro')
+    message(0, 1_000_400, 4, 1, { inputTokens: 2112, outputTokens: 351, cacheReadTokens: 9472, reasoningTokens: 12 }, 'deepseek-official', 'deepseek-v4-pro')
   ], { sessionId: 's1' }).records
   const stats = mergeScannedRecords(records, scanned, { deep: true })
   assert.deepEqual({ added: stats.added, replaced: stats.replaced, absorbed: stats.absorbed }, { added: 0, replaced: 0, absorbed: 1 })
   assert.equal(records.length, 1, '探针行被扫描行吸收，不产生重复')
   assert.equal(records[0].origin, SCAN_ORIGIN)
   assert.equal(records[0].inputTokens, 2112, 'token 以日志为准')
-  assert.equal(records[0].purpose, 'compaction', '探针独有的字段保留')
+  assert.equal(records[0].usdCnyRate, 7.1, '历史汇率保留')
   assert.equal(records[0].reasoningTokens, 12)
   assert.equal(records[0].turn, 4)
 })
@@ -379,7 +379,7 @@ test('listStoredSessions normalizes both listing shapes and degrades to list()',
 
 test('scan cache round-trips through disk shape and prunes vanished sessions', () => {
   const cache = createScanCache()
-  cache.sessions.s1 = { revision: 'r1', seq: 42, lastRoute: { provider: 'p', model: 'm' } }
+  cache.sessions.s1 = { revision: 'r1', seq: 42, lastRoute: { provider: 'p', model: 'm' }, lastSample: null }
   const restored = parseScanCache(JSON.parse(JSON.stringify(cache)))
   assert.deepEqual(restored, cache)
   assert.deepEqual(restored.sessions.s1.lastRoute, { provider: 'p', model: 'm' })
